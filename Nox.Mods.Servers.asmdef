@@ -1,0 +1,24 @@
+﻿{
+    "name": "Nox.Mods.Servers",
+    "rootNamespace": "",
+    "references": [
+        "Nox.CCK",
+        "Nox.Servers",
+        "UniTask",
+        "Nox.Mods.Jint",
+        "Nox.Users",
+        "Nox.Network",
+        "Nox.UI",
+        "Unity.TextMeshPro",
+        "Nox.CCK.Network"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
