@@ -33,6 +33,11 @@
       "id": "network",
       "type": "depends",
       "version": ">=1.0.0"
+    },
+    {
+      "id": "ui",
+      "type": "depends",
+      "version": ">=1.0.0"
     }
   ],
   "entrypoints": {
@@ -51,6 +56,10 @@
     {
       "type": "after",
       "id": "network"
+    },
+    {
+      "type": "after",
+      "id": "ui"
     }
   ]
 }
