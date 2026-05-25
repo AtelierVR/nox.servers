@@ -11,7 +11,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
-namespace api.nox.server.client {
+namespace Nox.Servers.Runtime.Clients {
 	public class ServerComponent : MonoBehaviour {
 		public  Image                   icon;
 		public  TextLanguage            title;

@@ -2,14 +2,13 @@ using System.Threading;
 using Cysharp.Threading.Tasks;
 using Nox.CCK.Network;
 using Nox.CCK.Utils;
+using Nox.Servers.Runtime.Base;
 
-namespace api.nox.server.network
-{
-	public static class Network
-	{
-		private static void InvokeFetch(Server server)
-		{
-			if (server == null) return;
+namespace Nox.Servers.Runtime.Networks {
+	public static class Network {
+		private static void InvokeFetch(Server server) {
+			if (server == null)
+				return;
 			Main.Instance.CoreAPI.EventAPI.Emit("server_fetch", server);
 
 			var config = Config.Load();
@@ -23,22 +22,20 @@ namespace api.nox.server.network
 			config.Save();
 		}
 
-		public static async UniTask<Server> Fetch(string address, CancellationToken cancellationToken = default)
-		{
+		public static async UniTask<Server> Fetch(string address, CancellationToken cancellationToken = default) {
 			if (Main.NetworkAPI == null || string.IsNullOrEmpty(address))
 				return null;
 
 			// Reuse the NoxWellKnown already fetched and cached during gateway discovery
 			var wk = await NodeDiscover.GetWellKnown(address);
-			if (wk == null)
-			{
+			if (wk == null) {
 				Logger.LogError($"Failed to fetch server info for {address}: discovery returned no well-known document");
 				return null;
 			}
 
 			var server = Server.From(wk);
 			InvokeFetch(server);
-			
+
 			return server;
 		}
 	}

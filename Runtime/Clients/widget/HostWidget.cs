@@ -1,12 +1,11 @@
-﻿using api.nox.server.client;
-using Nox.CCK.Utils;
+﻿using Nox.CCK.Utils;
 using Nox.UI;
 using Nox.UI.Widgets;
 using Nox.Users;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace api.nox.server.widget {
+namespace Nox.Servers.Runtime.Clients {
 	public class HostWidget : MonoBehaviour, IWidget {
 		public static string GetDefaultKey()
 			=> "host";

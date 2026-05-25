@@ -1,19 +1,17 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using api.nox.server.client;
-using api.nox.server.widget;
 using Nox.CCK.Mods.Cores;
 using Nox.CCK.Mods.Events;
 using Nox.CCK.Mods.Initializers;
 using Nox.CCK.Utils;
 using Nox.Network;
+using Nox.Servers.Runtime.Clients;
 using Nox.UI;
 using Nox.UI.Widgets;
 using Nox.Users;
 using UnityEngine;
 
-namespace api.nox.server {
+namespace Nox.Servers.Runtime {
 	public class Client : IClientModInitializer {
 		internal static IUiAPI UiAPI
 			=> Instance.CoreAPI.ModAPI
@@ -35,8 +33,8 @@ namespace api.nox.server {
 
 		private EventSubscription[] _events = Array.Empty<EventSubscription>();
 
-		internal static Client           Instance;
-		internal        IClientModCoreAPI CoreAPI;
+		internal static Client Instance;
+		internal IClientModCoreAPI CoreAPI;
 
 		public void OnInitializeClient(IClientModCoreAPI api) {
 			Instance = this;
@@ -48,22 +46,29 @@ namespace api.nox.server {
 		}
 
 		private void OnGoto(EventData context) {
-			if (!context.TryGet(0, out int mid)) return;
-			if (!context.TryGet(1, out string key)) return;
+			if (!context.TryGet(0, out int mid))
+				return;
+			if (!context.TryGet(1, out string key))
+				return;
 			var menu = UiAPI?.Get<IMenu>(mid);
-			if (menu == null) return;
+			if (menu == null)
+				return;
 			IPage page = null;
 			if (ServerPage.GetStaticKey() == key)
 				page = ServerPage.OnGotoAction(menu, context.Data[2..]);
-			if (page == null) return;
+			if (page == null)
+				return;
 			Instance.CoreAPI.EventAPI.Emit("menu_display", menu.Id, page);
 		}
 
 		private void OnWidgetRequest(EventData context) {
-			if (!context.TryGet(0, out int mid)) return;
-			if (!context.TryGet(1, out RectTransform tr)) return;
+			if (!context.TryGet(0, out int mid))
+				return;
+			if (!context.TryGet(1, out RectTransform tr))
+				return;
 			var menu = UiAPI?.Get<IMenu>(mid);
-			if (menu == null) return;
+			if (menu == null)
+				return;
 			List<(GameObject, IWidget)> widgets = new();
 			if (HostWidget.TryMake(menu, tr, out var widget))
 				widgets.Add(widget);

@@ -1,13 +1,10 @@
 using System;
 using Nox.CCK.Network;
-using Nox.Servers;
 
-namespace api.nox.server
-{
+namespace Nox.Servers.Runtime.Base {
 	// ReSharper disable InconsistentNaming
 	[Serializable]
-	public class Server : IServer
-	{
+	public class Server : IServer {
 		public static Server From(NoxWellKnown wk)
 			=> wk == null ? null : new Server { reference = wk };
 
@@ -53,8 +50,8 @@ namespace api.nox.server
 			=> ServerEndpoints.From(reference.endpoints);
 
 		public DateTime ReadyAt
-			=> reference.started > 0 
-				? DateTimeOffset.FromUnixTimeMilliseconds((long)reference.started).UtcDateTime 
+			=> reference.started > 0
+				? DateTimeOffset.FromUnixTimeMilliseconds((long)reference.started).UtcDateTime
 				: default;
 
 		public override string ToString()

@@ -13,7 +13,7 @@ using UnityEngine;
 using UnityEngine.Events;
 using Logger = Nox.CCK.Utils.Logger;
 
-namespace api.nox.server.network {
+namespace Nox.Servers.Runtime.Networks {
 	public class ServerSocket : IServerSocket {
 		public static readonly List<ServerSocket> Connections = new();
 
@@ -81,7 +81,7 @@ namespace api.nox.server.network {
 					_headers[header.Key] = header.Value;
 			if (authToken != null)
 				_headers.Add("Authorization", authToken.ToHeader());
-			_url = new Uri(uri);
+			_url          = new Uri(uri);
 			_reconcilable = false;
 			Connections.Add(this);
 		}
@@ -114,7 +114,7 @@ namespace api.nox.server.network {
 				await Close();
 
 			_webSocket = new ClientWebSocket();
-			_cts = new CancellationTokenSource();
+			_cts       = new CancellationTokenSource();
 
 			// Force-initialise ServicePointManager before the first TLS handshake.
 			// In built Unity (Mono) builds the static constructor fails if System.Configuration
@@ -204,26 +204,26 @@ namespace api.nox.server.network {
 			=> new(_headers);
 
 		private void StartListening() {
-			if (_isListening) return;
+			if (_isListening)
+				return;
 			_isListening = true;
 			ListenForMessages().Forget();
 		}
 
 		private async UniTask ListenForMessages() {
-			var buffer = new byte[4096];
+			var buffer = new byte[ 4096 ];
 
 			while (_webSocket is { State: WebSocketState.Open } && !_cts.Token.IsCancellationRequested) {
 				try {
 					var result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), _cts.Token);
 					if (result.MessageType == WebSocketMessageType.Text) {
-						var rawBytes = new byte[result.Count];
+						var rawBytes = new byte[ result.Count ];
 						Array.Copy(buffer, rawBytes, result.Count);
 						var message = Encoding.UTF8.GetString(rawBytes);
 						OnMessageReceived.Invoke(message);
 						OnRaw.Invoke(rawBytes);
 						TryDispatchPacket(message);
-					}
-					else if (result.MessageType == WebSocketMessageType.Close) {
+					} else if (result.MessageType == WebSocketMessageType.Close) {
 						Logger.LogDebug("WebSocket connection closed by server.");
 						await HandleDisconnection();
 						break;
@@ -238,7 +238,8 @@ namespace api.nox.server.network {
 					break;
 				} catch (Exception ex) {
 					Logger.LogError(new Exception("Unexpected error in WebSocket listening loop", ex));
-					if (OnError != null) OnError.Invoke(ex);
+					if (OnError != null)
+						OnError.Invoke(ex);
 					await HandleDisconnection();
 					break;
 				}
@@ -276,7 +277,8 @@ namespace api.nox.server.network {
 					OnError?.Invoke(ex);
 				}
 
-				if (retryCount >= _maxRetries && _maxRetries != 0) continue;
+				if (retryCount >= _maxRetries && _maxRetries != 0)
+					continue;
 				var delay = Math.Min(30, retryCount * 5); // Délai progressif jusqu'à 30 secondes
 				await UniTask.Delay(TimeSpan.FromSeconds(delay));
 			}
@@ -321,16 +323,19 @@ namespace api.nox.server.network {
 		private void TryDispatchPacket(string message) {
 			try {
 				var packet = JsonConvert.DeserializeObject<SocketPacket>(message);
-				if (packet?.type == null) return;
+				if (packet?.type == null)
+					return;
 				OnPacket.Invoke(packet);
 				List<Action<SocketPacket>> snapshot;
 				lock (_handlers) {
-					if (!_handlers.TryGetValue(packet.type, out var list)) return;
+					if (!_handlers.TryGetValue(packet.type, out var list))
+						return;
 					snapshot = new List<Action<SocketPacket>>(list);
 				}
 				foreach (var h in snapshot)
 					h(packet);
-			} catch { /* ignore malformed packets */ }
+			} catch { /* ignore malformed packets */
+			}
 		}
 
 		private static SocketPacket<T> ToTyped<T>(SocketPacket raw) {
@@ -371,7 +376,8 @@ namespace api.nox.server.network {
 					Off(type, (Action<SocketPacket<T>>)onceObj);
 					return;
 				}
-				if (!_handlerWrappers.TryGetValue(handler, out var wrapper)) return;
+				if (!_handlerWrappers.TryGetValue(handler, out var wrapper))
+					return;
 				_handlerWrappers.Remove(handler);
 				if (_handlers.TryGetValue(type, out var list))
 					list.Remove(wrapper);

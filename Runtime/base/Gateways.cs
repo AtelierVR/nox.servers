@@ -1,7 +1,6 @@
 using System;
-using Nox.Servers;
 
-namespace api.nox.server {
+namespace Nox.Servers.Runtime.Base {
 	[Serializable]
 	public class Gateways : IGateways {
 		public string ws;

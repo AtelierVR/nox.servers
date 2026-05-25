@@ -1,13 +1,11 @@
 using System;
-using api.nox.server.network;
 using Cysharp.Threading.Tasks;
 using Nox.CCK.Mods.Events;
-using Nox.Servers;
 using Nox.UI;
 using Nox.Users;
 using UnityEngine;
 
-namespace api.nox.server.client {
+namespace Nox.Servers.Runtime.Clients {
 	public class ServerPage : IPage {
 		static internal string GetStaticKey()
 			=> "server";
@@ -15,13 +13,13 @@ namespace api.nox.server.client {
 		public string GetKey()
 			=> GetStaticKey();
 
-		internal int             MId;
-		private  object[]        _context;
-		private  GameObject      _content;
-		private  ServerComponent _component;
-		private  string          _address;
-		public   IServer         Server;
-		private  bool            _isLoading;
+		internal int MId;
+		private object[] _context;
+		private GameObject _content;
+		private ServerComponent _component;
+		private string _address;
+		public IServer Server;
+		private bool _isLoading;
 
 		private EventSubscription[] _events = Array.Empty<EventSubscription>();
 
@@ -42,7 +40,8 @@ namespace api.nox.server.client {
 			=> (current ?? Client.UserAPI.Current)?.Server == _address;
 
 		static internal IPage OnGotoAction(IMenu menu, object[] context) {
-			if (!T(context, 0, out string type)) return null;
+			if (!T(context, 0, out string type))
+				return null;
 			switch (type) {
 				case "address" when T(context, 1, out string a0):
 					return OnPageByAddress(menu, context, a0);
@@ -75,11 +74,13 @@ namespace api.nox.server.client {
 		}
 
 		private async UniTask Refresh(bool load) {
-			if (_isLoading) return;
+			if (_isLoading)
+				return;
 			_isLoading = true;
-			Server     = await Network.Fetch(_address);
+			Server     = await Networks.Network.Fetch(_address);
 			_isLoading = false;
-			if (load) _component.UpdateContent(Server);
+			if (load)
+				_component.UpdateContent(Server);
 		}
 
 		public object[] GetContext()
@@ -89,7 +90,8 @@ namespace api.nox.server.client {
 			=> Client.UiAPI.Get<IMenu>(MId);
 
 		public GameObject GetContent(RectTransform parent) {
-			if (_content) return _content;
+			if (_content)
+				return _content;
 			(_content, _component) = ServerComponent.Generate(this, parent);
 			_component.UpdateLoading();
 			return _content;
@@ -103,13 +105,17 @@ namespace api.nox.server.client {
 
 		private void OnServerUpdate(EventData context) {
 			Server = context.TryGet(0, out IServer srv) ? srv : Server;
-			if (Server != null) _component.UpdateContent(Server);
+			if (Server != null)
+				_component.UpdateContent(Server);
 		}
 
 		public void OnDisplay(IPage lastPage) {
-			if (Server != null) _component.UpdateContent(Server);
-			else if (_isLoading) _component.UpdateLoading();
-			else _component.UpdateError("World not found or loading failed.");
+			if (Server != null)
+				_component.UpdateContent(Server);
+			else if (_isLoading)
+				_component.UpdateLoading();
+			else
+				_component.UpdateError("World not found or loading failed.");
 		}
 
 		public void OnRemove() {

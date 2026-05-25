@@ -1,13 +1,9 @@
 using System;
 using System.Collections.Generic;
-using Nox.CCK.Network;
-using Nox.Servers;
 
-namespace api.nox.server
-{
+namespace Nox.Servers.Runtime.Base {
 	[Serializable]
-	public class ServerEndpoints : Dictionary<string, string>, IServerEndpoints
-	{
+	public class ServerEndpoints : Dictionary<string, string>, IServerEndpoints {
 		private ServerEndpoints(IDictionary<string, string> dictionary) : base(dictionary) { }
 
 		public string WellKnown

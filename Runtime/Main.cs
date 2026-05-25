@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Linq;
-using api.nox.server.network;
 using Cysharp.Threading.Tasks;
 using Nox.CCK.Language;
 using Nox.CCK.Mods.Cores;
@@ -8,14 +7,12 @@ using Nox.CCK.Mods.Events;
 using Nox.CCK.Mods.Initializers;
 using Nox.CCK.Utils;
 using Nox.Network;
-using Nox.Servers;
+using Nox.Servers.Runtime.Networks;
 using Nox.Users;
 using UnityEngine.Events;
 
-namespace api.nox.server
-{
-	public class Main : IMainModInitializer, IServerAPI
-	{
+namespace Nox.Servers.Runtime {
+	public class Main : IMainModInitializer, IServerAPI {
 		internal IMainModCoreAPI CoreAPI;
 		internal static Main Instance;
 
@@ -41,16 +38,17 @@ namespace api.nox.server
 		internal readonly UnityEvent OnSocketConnected = new();
 		internal readonly UnityEvent OnSocketDisconnected = new();
 
-		UnityEvent IServerAPI.OnSocketConnected    => OnSocketConnected;
-		UnityEvent IServerAPI.OnSocketDisconnected => OnSocketDisconnected;
+		UnityEvent IServerAPI.OnSocketConnected
+			=> OnSocketConnected;
+		UnityEvent IServerAPI.OnSocketDisconnected
+			=> OnSocketDisconnected;
 
 		private EventSubscription[] _events = Array.Empty<EventSubscription>();
 
-		public void OnInitializeMain(IMainModCoreAPI api)
-		{
-			CoreAPI = api;
+		public void OnInitializeMain(IMainModCoreAPI api) {
+			CoreAPI  = api;
 			Instance = this;
-			_lang = CoreAPI.AssetAPI.GetAsset<LanguagePack>("lang.asset");
+			_lang    = CoreAPI.AssetAPI.GetAsset<LanguagePack>("lang.asset");
 			LanguageManager.AddPack(_lang);
 
 			_events = new[] {
@@ -90,36 +88,29 @@ namespace api.nox.server
 			};
 		}
 
-		private void OnCurrentUserUpdated(EventData context)
-		{
+		private void OnCurrentUserUpdated(EventData context) {
 			var user = context.TryGet(0, out IUser u) ? u : null;
 			StartCurrentSocket(user).Forget();
 		}
 
 
-		public async UniTask OnPostInitializeMainAsync()
-		{
+		public async UniTask OnPostInitializeMainAsync() {
 			var user = UserAPI.Current ?? await UserAPI.FetchCurrent();
 			await StartCurrentSocket(user);
 		}
 
-		private async UniTask StartCurrentSocket(IUser user)
-		{
+		private async UniTask StartCurrentSocket(IUser user) {
 			// Prévenir les connexions concurrentes
-			lock (_socketLock)
-			{
-				if (_isConnecting)
-				{
+			lock (_socketLock) {
+				if (_isConnecting) {
 					Logger.LogDebug("Socket connection already in progress, skipping.");
 					return;
 				}
 				_isConnecting = true;
 			}
 
-			try
-			{
-				if (Socket.Item2 != null && Socket.Item1.IsValid() && Socket.Item1.Equals(user?.Identifier))
-				{
+			try {
+				if (Socket.Item2 != null && Socket.Item1.IsValid() && Socket.Item1.Equals(user?.Identifier)) {
 					Logger.LogDebug("Already connected to server for current user.");
 					return;
 				}
@@ -127,8 +118,7 @@ namespace api.nox.server
 				if (Socket.Item2 != null)
 					await Socket.Item2.Dispose();
 
-				if (user == null)
-				{
+				if (user == null) {
 					Logger.LogDebug("No current user, not connecting to server.");
 					Socket = (Identifier.Invalid, null);
 					return;
@@ -137,8 +127,7 @@ namespace api.nox.server
 				Socket = (user.Identifier, null);
 
 				var address = user.Server;
-				if (address == null)
-				{
+				if (address == null) {
 					Logger.LogWarning("Current user has no server address set, cannot connect to server.");
 					return;
 				}
@@ -146,8 +135,7 @@ namespace api.nox.server
 				var token = await UserAPI.GetToken(address);
 
 				var socket = await ServerSocket.Make(address, token);
-				if (socket == null)
-				{
+				if (socket == null) {
 					Logger.LogError($"Failed to connect to server at {address}");
 					return;
 				}
@@ -168,18 +156,14 @@ namespace api.nox.server
 				});
 
 				await Socket.Item2.Connect();
-			}
-			finally
-			{
-				lock (_socketLock)
-				{
+			} finally {
+				lock (_socketLock) {
 					_isConnecting = false;
 				}
 			}
 		}
 
-		public async UniTask OnDisposeMainAsync()
-		{
+		public async UniTask OnDisposeMainAsync() {
 			foreach (var ev in _events.Where(e => e != null))
 				CoreAPI.EventAPI.Unsubscribe(ev);
 			LanguageManager.RemovePack(_lang);
@@ -189,17 +173,17 @@ namespace api.nox.server
 
 			Socket = (Identifier.Invalid, null);
 
-			CoreAPI = null;
+			CoreAPI  = null;
 			Instance = null;
 		}
 
 		public async UniTask<IServer> Fetch(string from = null)
-			=> await Network.Fetch(from);
+			=> await Networks.Network.Fetch(from);
 
 		public async UniTask<IServerSocket> Connect(string address)
 			=> await ServerSocket.Make(address);
 
-		public IServerSocket Current 
+		public IServerSocket Current
 			=> Socket.Item2;
 
 		// ── Packet helpers (delegate to Current socket) ────────────────────────────────────

@@ -1,11 +1,7 @@
-using System.Collections;
 using System.Collections.Generic;
-using Nox.Servers;
 
-namespace api.nox.server
-{
-	public class ServerVersions : Dictionary<string, string>, IServerVersions
-	{
+namespace Nox.Servers.Runtime.Base {
+	public class ServerVersions : Dictionary<string, string>, IServerVersions {
 		private ServerVersions(Dictionary<string, string> dict) : base(dict) { }
 
 		public static ServerVersions From(Dictionary<string, string> dict)
