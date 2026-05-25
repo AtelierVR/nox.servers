@@ -1,5 +1,6 @@
 ﻿{
-  "name": "nox.servers",
-  "displayName": "Nox - Servers",
-  "version": "1.0.0"
+    "name":  "nox.servers",
+    "displayName":  "Nox - Servers",
+    "version":  "1.0.0",
+    "description":  "Server discovery, listing, and management API for Nox servers."
 }
