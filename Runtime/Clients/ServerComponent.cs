@@ -1,28 +1,23 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using Cysharp.Threading.Tasks;
-using Newtonsoft.Json.Linq;
 using Nox.CCK.Language;
+using Nox.CCK.Network;
 using Nox.CCK.Utils;
-using Nox.Servers;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace Nox.Servers.Runtime.Clients {
 	public class ServerComponent : MonoBehaviour {
-		public  Image                   icon;
-		public  TextLanguage            title;
-		public  TextLanguage            identifier;
-		public  TextLanguage            label;
-		public  Image                   labelIcon;
-		public  RectTransform           content;
-		public  ServerPage              Page;
-		private CancellationTokenSource _thumbnailTokenSource;
-		public  GameObject              descriptionContainer;
-		public  TextLanguage            descriptionText;
+		public  Image          icon;
+		public  TextLanguage   title;
+		public  TextLanguage   identifier;
+		public  TextLanguage   label;
+		public  Image          labelIcon;
+		public  RectTransform  content;
+		public  ServerPage     Page;
+		private NetworkImage   _iconNetworkImage;
+		public  GameObject     descriptionContainer;
+		public  TextLanguage   descriptionText;
 
 		public void UpdateError(string error) {
 			title.UpdateText("server.error");
@@ -54,27 +49,19 @@ namespace Nox.Servers.Runtime.Clients {
 				descriptionContainer.SetActive(true);
 			} else descriptionContainer.SetActive(false);
 
-			UpdateIcon(server).Forget();
+			UpdateIcon(server);
 
 			UpdateLayout.UpdateImmediate(content);
 		}
 
-		private async UniTask UpdateIcon(IServer world) {
-			if (_thumbnailTokenSource != null) {
-				_thumbnailTokenSource?.Cancel();
-				_thumbnailTokenSource?.Dispose();
+		private void UpdateIcon(IServer server) {
+			if (server?.Metadata?.Icon == null) {
+				icon.sprite = null;
+				return;
 			}
 
-			_thumbnailTokenSource = new CancellationTokenSource();
-
-			if (world?.Metadata?.Icon != null) {
-				var texture = await Client.NetworkAPI.FetchTexture(world.Metadata.Icon, token: _thumbnailTokenSource.Token);
-				icon.sprite = texture
-					? Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height), Vector2.zero)
-					: null;
-			}
-
-			_thumbnailTokenSource = null;
+			_iconNetworkImage = icon.GetOrAddComponent<NetworkImage>();
+			_iconNetworkImage.Url = server.Metadata.Icon;
 		}
 
 		public static (GameObject, ServerComponent) Generate(ServerPage worldPage, RectTransform parent) {
