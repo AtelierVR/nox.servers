@@ -77,9 +77,10 @@ namespace Nox.Servers.Runtime.Clients {
 			if (_isLoading)
 				return;
 			_isLoading = true;
+			_component?.UpdateLoading();
 			Server     = await Networks.Network.Fetch(_address);
 			_isLoading = false;
-			if (load)
+			if (load && _component != null)
 				_component.UpdateContent(Server);
 		}
 
@@ -93,7 +94,10 @@ namespace Nox.Servers.Runtime.Clients {
 			if (_content)
 				return _content;
 			(_content, _component) = ServerComponent.Generate(this, parent);
-			_component.UpdateLoading();
+			if (Server != null)
+				_component.UpdateContent(Server);
+			else
+				_component.UpdateLoading();
 			return _content;
 		}
 
