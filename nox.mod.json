@@ -6,7 +6,7 @@
     "servers"
   ],
   "name": "Servers",
-  "version": "1.0.0",
+  "version": "1.0.x",
   "description": "Server discovery, listing, and management API for Nox servers.",
   "license": "GPL-3.0",
   "icon": null,
