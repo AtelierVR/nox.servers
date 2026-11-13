@@ -78,10 +78,20 @@ namespace Nox.Servers.Runtime.Clients {
 				return;
 			_isLoading = true;
 			_component?.UpdateLoading();
-			Server     = await Networks.Network.Fetch(_address);
-			_isLoading = false;
-			if (load && _component != null)
+
+			try {
+				Server = await Networks.Network.Fetch(_address);
+			} finally {
+				_isLoading = false;
+			}
+
+			if (!load || _component == null)
+				return;
+
+			if (Server != null)
 				_component.UpdateContent(Server);
+			else
+				_component.UpdateError($"Server {_address} did not answer.");
 		}
 
 		public object[] GetContext()
