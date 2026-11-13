@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using Cysharp.Threading.Tasks;
 using Nox.CCK.Language;
@@ -12,14 +13,20 @@ using Nox.Users;
 using UnityEngine.Events;
 
 namespace Nox.Servers.Runtime {
-	public class Main : IMainModInitializer, IServerAPI {
+	public class Main : IMainModInitializer, IServerAPI, IServerEventsAPI {
 		internal IMainModCoreAPI CoreAPI;
 		internal static Main Instance;
 
 		private LanguagePack _lang;
 		internal (Identifier, ServerSocket) Socket = (Identifier.Invalid, null);
-		private readonly object _socketLock = new object();
+		private readonly object _socketLock = new();
 		private bool _isConnecting;
+		private bool _disposed;
+
+		private static readonly TimeSpan _socketTimeout = TimeSpan.FromSeconds(30);
+
+		/// <summary>WebSocket subscriptions of the current user's server, kept across reconnections.</summary>
+		internal readonly FrameSubscriptions Subscriptions = new();
 
 		internal static INetworkAPI NetworkAPI
 			=> Instance.CoreAPI.ModAPI
@@ -46,9 +53,9 @@ namespace Nox.Servers.Runtime {
 		private EventSubscription[] _events = Array.Empty<EventSubscription>();
 
 		public void OnInitializeMain(IMainModCoreAPI api) {
-			CoreAPI  = api;
+			CoreAPI = api;
 			Instance = this;
-			_lang    = CoreAPI.AssetAPI.GetAsset<LanguagePack>("lang.asset");
+			_lang = CoreAPI.AssetAPI.GetAsset<LanguagePack>("lang.asset");
 			LanguageManager.AddPack(_lang);
 
 			_events = new[] {
@@ -96,7 +103,8 @@ namespace Nox.Servers.Runtime {
 
 		public async UniTask OnPostInitializeMainAsync() {
 			var user = UserAPI.Current ?? await UserAPI.FetchCurrent();
-			await StartCurrentSocket(user);
+
+			StartCurrentSocket(user).Forget();
 		}
 
 		private async UniTask StartCurrentSocket(IUser user) {
@@ -115,8 +123,10 @@ namespace Nox.Servers.Runtime {
 					return;
 				}
 
-				if (Socket.Item2 != null)
+				if (Socket.Item2 != null) {
+					Subscriptions.Detach(Socket.Item2);
 					await Socket.Item2.Dispose();
+				}
 
 				if (user == null) {
 					Logger.LogDebug("No current user, not connecting to server.");
@@ -134,7 +144,8 @@ namespace Nox.Servers.Runtime {
 
 				var token = await UserAPI.GetToken(address);
 
-				var socket = await ServerSocket.Make(address, token);
+				var socket = await ServerSocket.Make(address, token)
+					.Timeout(_socketTimeout, DelayType.Realtime);
 				if (socket == null) {
 					Logger.LogError($"Failed to connect to server at {address}");
 					return;
@@ -142,38 +153,59 @@ namespace Nox.Servers.Runtime {
 
 				Socket = (user.Identifier, socket);
 
-				socket.OnMessageReceived.AddListener(Instance.CoreAPI.LoggerAPI.LogDebug);
+				socket.OnMessageReceived.AddListener(FrameLog.Frame);
 				socket.OnError.AddListener(Instance.CoreAPI.LoggerAPI.LogException);
 				socket.OnConnected.AddListener(() => {
 					Logger.LogDebug("Connected to server");
+					FrameLog.Reset();
+					Subscriptions.Attach(socket);
 					CoreAPI.EventAPI.Emit("socket_connect");
 					OnSocketConnected.Invoke();
 				});
 				socket.OnDisconnected.AddListener(() => {
 					Logger.LogDebug("Disconnected from server");
+					Subscriptions.Detach(socket);
 					CoreAPI.EventAPI.Emit("socket_disconnect");
 					OnSocketDisconnected.Invoke();
 				});
 
-				await Socket.Item2.Connect();
+				if (await socket.Connect().Timeout(_socketTimeout, DelayType.Realtime))
+					return;
+
+				Logger.LogWarning($"Server at {address} did not answer, releasing the socket.");
+				Socket = (user.Identifier, null);
+				Subscriptions.Detach(socket);
+				await socket.Dispose();
+			} catch (TimeoutException) {
+				Logger.LogWarning($"Connecting to the server timed out after {_socketTimeout.TotalSeconds:0} s.");
+			} catch (OperationCanceledException) {
+				// The attempt was cancelled (mod unload): nothing to report.
+			} catch (Exception e) {
+				Logger.LogError(e);
 			} finally {
-				lock (_socketLock) {
+				lock (_socketLock)
 					_isConnecting = false;
-				}
 			}
 		}
 
 		public async UniTask OnDisposeMainAsync() {
-			foreach (var ev in _events.Where(e => e != null))
-				CoreAPI.EventAPI.Unsubscribe(ev);
-			LanguageManager.RemovePack(_lang);
+			if (_disposed)
+				return;
+			_disposed = true;
 
-			if (Socket.Item2 != null)
+			foreach (var ev in _events.Where(e => e != null))
+				CoreAPI?.EventAPI.Unsubscribe(ev);
+			LanguageManager.RemovePack(_lang);
+			_lang = null;
+
+			if (Socket.Item2 != null) {
+				Subscriptions.Detach(Socket.Item2);
 				await Socket.Item2.Dispose();
+			}
 
 			Socket = (Identifier.Invalid, null);
 
-			CoreAPI  = null;
+			CoreAPI = null;
 			Instance = null;
 		}
 
@@ -185,6 +217,38 @@ namespace Nox.Servers.Runtime {
 
 		public IServerSocket Current
 			=> Socket.Item2;
+
+		// ── Persistent WebSocket subscriptions ───────────────────────────────────────────
+
+		public IReadOnlyCollection<string> Frames
+			=> Subscriptions.Frames;
+
+		public UnityEvent<string> OnSubscribed
+			=> Subscriptions.OnSubscribed;
+
+		public UnityEvent<string> OnFrame
+			=> Subscriptions.OnFrame;
+
+		public bool IsSubscribed(string frame)
+			=> Subscriptions.IsSubscribed(frame);
+
+		public void Subscribe(string frame)
+			=> Subscriptions.Subscribe(frame);
+
+		public void Unsubscribe(string frame)
+			=> Subscriptions.Unsubscribe(frame);
+
+		public void On(string frame, Action<SocketPacket> handler)
+			=> Subscriptions.On(frame, handler);
+
+		public void Off(string frame, Action<SocketPacket> handler)
+			=> Subscriptions.Off(frame, handler);
+
+		void IServerEventsAPI.On<T>(string frame, Action<SocketPacket<T>> handler)
+			=> Subscriptions.On(frame, handler);
+
+		void IServerEventsAPI.Off<T>(string frame, Action<SocketPacket<T>> handler)
+			=> Subscriptions.Off(frame, handler);
 
 		// ── Packet helpers (delegate to Current socket) ────────────────────────────────────
 
