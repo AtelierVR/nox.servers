@@ -12,6 +12,7 @@ using Nox.Users;
 using UnityEngine;
 using UnityEngine.Events;
 using Logger = Nox.CCK.Utils.Logger;
+using System.IO;
 
 namespace Nox.Servers.Runtime.Networks {
 	public class ServerSocket : IServerSocket {
@@ -31,6 +32,10 @@ namespace Nox.Servers.Runtime.Networks {
 		private readonly string _address;
 		private readonly Uri _url;
 		private int _maxRetries = 0;
+
+		private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
+		private static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(3);
+		private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(10);
 
 		private readonly Dictionary<string, string> _headers = new() {
 			{
@@ -53,9 +58,9 @@ namespace Nox.Servers.Runtime.Networks {
 				string.Join(
 					"; ",
 					Main.Instance.CoreAPI.ModAPI.GetMods()
-						.Where(mod => mod != null && mod.IsLoaded())
-						.Select(m => m.GetMetadata())
-						.Select(metadata => $"{metadata.GetId()}/{metadata.GetVersion()}")
+						.Where(mod => mod != null && mod.IsLoaded)
+						.Select(m => m.Metadata)
+						.Select(metadata => $"{metadata.Id}/{metadata.Version}")
 				)
 			}, {
 				"X-Powered-By",
@@ -81,7 +86,7 @@ namespace Nox.Servers.Runtime.Networks {
 					_headers[header.Key] = header.Value;
 			if (authToken != null)
 				_headers.Add("Authorization", authToken.ToHeader());
-			_url          = new Uri(uri);
+			_url = new Uri(uri);
 			_reconcilable = false;
 			Connections.Add(this);
 		}
@@ -114,7 +119,7 @@ namespace Nox.Servers.Runtime.Networks {
 				await Close();
 
 			_webSocket = new ClientWebSocket();
-			_cts       = new CancellationTokenSource();
+			_cts = new CancellationTokenSource();
 
 			// Force-initialise ServicePointManager before the first TLS handshake.
 			// In built Unity (Mono) builds the static constructor fails if System.Configuration
@@ -135,7 +140,19 @@ namespace Nox.Servers.Runtime.Networks {
 				}
 
 			try {
-				await _webSocket.ConnectAsync(_url, _cts.Token);
+				using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token)) {
+					timeout.CancelAfter(ConnectTimeout);
+					await _webSocket.ConnectAsync(_url, timeout.Token);
+				}
+			} catch (OperationCanceledException) {
+				if (_cts == null || _cts.IsCancellationRequested)
+					return false;
+
+				Logger.LogWarning($"WebSocket connection to {_url} timed out after {ConnectTimeout.TotalSeconds:0.#} s, the server is not answering.");
+				AbortSocket();
+				_reconcilable = false;
+				OnError?.Invoke(new TimeoutException($"Connection to {_url} timed out."));
+				return false;
 			} catch (Exception ex) {
 				Logger.LogError(new Exception($"Error while connecting to WebSocket at {_url}", ex));
 				_reconcilable = false;
@@ -158,11 +175,17 @@ namespace Nox.Servers.Runtime.Networks {
 
 			if (!IsConnected()) {
 				Logger.LogDebug("WebSocket is already closed or not initialized.");
+				_cts?.Cancel();
+				_cts?.Dispose();
+				_cts = null;
 				return true;
 			}
 
 			try {
-				await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing connection", CancellationToken.None);
+				using (var timeout = new CancellationTokenSource(CloseTimeout))
+					await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing connection", timeout.Token);
+			} catch (OperationCanceledException) {
+				_webSocket?.Abort();
 			} catch (Exception ex) {
 				Logger.LogError(new Exception("Error while closing WebSocket connection", ex));
 				OnError?.Invoke(ex);
@@ -171,14 +194,34 @@ namespace Nox.Servers.Runtime.Networks {
 			Logger.LogDebug($"WebSocket connection to {_url} closed successfully.");
 
 			// Nettoyer les ressources
-			_webSocket.Dispose();
+			_webSocket?.Dispose();
 			_webSocket = null;
-			_cts.Cancel();
-			_cts.Dispose();
+			_cts?.Cancel();
+			_cts?.Dispose();
 			_cts = null;
 			OnDisconnected.Invoke();
 
 			return true;
+		}
+
+		private void AbortSocket() {
+			try {
+				_webSocket?.Abort();
+				_webSocket?.Dispose();
+			} catch {
+				// Already gone: nothing left to release.
+			}
+			_webSocket = null;
+		}
+
+		private CancellationToken CurrentToken {
+			get {
+				try {
+					return _cts?.Token ?? CancellationToken.None;
+				} catch (ObjectDisposedException) {
+					return new CancellationToken(true);
+				}
+			}
 		}
 
 		public bool IsConnected()
@@ -211,41 +254,57 @@ namespace Nox.Servers.Runtime.Networks {
 		}
 
 		private async UniTask ListenForMessages() {
-			var buffer = new byte[ 4096 ];
+			var buffer = new byte[4096];
+			var message = new MemoryStream(buffer.Length);
 
-			while (_webSocket is { State: WebSocketState.Open } && !_cts.Token.IsCancellationRequested) {
-				try {
-					var result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), _cts.Token);
-					if (result.MessageType == WebSocketMessageType.Text) {
-						var rawBytes = new byte[ result.Count ];
-						Array.Copy(buffer, rawBytes, result.Count);
-						var message = Encoding.UTF8.GetString(rawBytes);
-						OnMessageReceived.Invoke(message);
+			try {
+				while (_webSocket is { State: WebSocketState.Open } && !_cts.Token.IsCancellationRequested) {
+					try {
+						message.SetLength(0);
+
+						WebSocketReceiveResult result;
+
+						// A frame larger than the buffer arrives in several parts: reassemble it before handling,
+						// otherwise the packet is truncated and the JSON never parses.
+						do {
+							result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), _cts.Token);
+
+							if (result.MessageType == WebSocketMessageType.Close) {
+								Logger.LogDebug("WebSocket connection closed by server.");
+								await HandleDisconnection();
+								return;
+							}
+
+							message.Write(buffer, 0, result.Count);
+						} while (!result.EndOfMessage);
+
+						if (result.MessageType != WebSocketMessageType.Text)
+							continue;
+
+						var rawBytes = message.ToArray();
+						var text = Encoding.UTF8.GetString(rawBytes);
+						OnMessageReceived.Invoke(text);
 						OnRaw.Invoke(rawBytes);
-						TryDispatchPacket(message);
-					} else if (result.MessageType == WebSocketMessageType.Close) {
-						Logger.LogDebug("WebSocket connection closed by server.");
+						TryDispatchPacket(text);
+					} catch (OperationCanceledException) {
+						// Connexion fermée normalement
+						break;
+					} catch (WebSocketException ex) {
+						Logger.LogWarning($"WebSocket closed on {_address}: {ex.Message}");
+						OnError.Invoke(ex);
+						await HandleDisconnection();
+						break;
+					} catch (Exception ex) {
+						Logger.LogError(new Exception("Unexpected error in WebSocket listening loop", ex));
+						OnError.Invoke(ex);
 						await HandleDisconnection();
 						break;
 					}
-				} catch (OperationCanceledException) {
-					// Connexion fermée normalement
-					break;
-				} catch (WebSocketException ex) {
-					Logger.LogError(new Exception("WebSocket error in listening loop", ex));
-					OnError.Invoke(ex);
-					await HandleDisconnection();
-					break;
-				} catch (Exception ex) {
-					Logger.LogError(new Exception("Unexpected error in WebSocket listening loop", ex));
-					if (OnError != null)
-						OnError.Invoke(ex);
-					await HandleDisconnection();
-					break;
 				}
+			} finally {
+				message.Dispose();
+				_isListening = false;
 			}
-
-			_isListening = false;
 		}
 
 		private async UniTask HandleDisconnection() {
@@ -254,8 +313,9 @@ namespace Nox.Servers.Runtime.Networks {
 
 			if (_autoReconnect && _reconcilable) {
 				Logger.LogDebug("Attempting to reconnect...");
-				await UniTask.Delay(TimeSpan.FromSeconds(5)); // Attendre 5 secondes avant de reconnecter
-				if (_cts is { Token: { IsCancellationRequested: false } })
+				var token = CurrentToken;
+				await UniTask.Delay(TimeSpan.FromSeconds(5), cancellationToken: token).SuppressCancellationThrow(); // Attendre 5 secondes avant de reconnecter
+				if (!token.IsCancellationRequested)
 					await AttemptReconnect();
 			}
 		}
@@ -263,7 +323,7 @@ namespace Nox.Servers.Runtime.Networks {
 		private async UniTask AttemptReconnect() {
 			var retryCount = 0;
 
-			while ((retryCount < _maxRetries || _maxRetries == 0) && _autoReconnect && (_cts == null || !_cts.Token.IsCancellationRequested)) {
+			while ((retryCount < _maxRetries || _maxRetries == 0) && _autoReconnect && !CurrentToken.IsCancellationRequested) {
 				try {
 					retryCount++;
 					Logger.LogDebug($"Reconnection attempt {retryCount}/{_maxRetries}");
@@ -280,7 +340,7 @@ namespace Nox.Servers.Runtime.Networks {
 				if (retryCount >= _maxRetries && _maxRetries != 0)
 					continue;
 				var delay = Math.Min(30, retryCount * 5); // Délai progressif jusqu'à 30 secondes
-				await UniTask.Delay(TimeSpan.FromSeconds(delay));
+				await UniTask.Delay(TimeSpan.FromSeconds(delay), cancellationToken: CurrentToken).SuppressCancellationThrow();
 			}
 
 			Logger.LogError($"Failed to reconnect after {_maxRetries} attempts.");
@@ -294,8 +354,14 @@ namespace Nox.Servers.Runtime.Networks {
 
 			try {
 				var buffer = Encoding.UTF8.GetBytes(message);
-				await _webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, _cts.Token);
+				using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(_cts?.Token ?? CancellationToken.None)) {
+					timeout.CancelAfter(SendTimeout);
+					await _webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, timeout.Token);
+				}
 				return true;
+			} catch (OperationCanceledException) {
+				Logger.LogWarning($"Sending a message to {_url} timed out after {SendTimeout.TotalSeconds:0.#} s, the server is not answering.");
+				return false;
 			} catch (Exception ex) {
 				Logger.LogError(new Exception("Unexpected error in sending message", ex));
 				OnError.Invoke(ex);
@@ -303,19 +369,19 @@ namespace Nox.Servers.Runtime.Networks {
 			}
 		}
 
-		public async UniTask Dispose() {
-			if (_cts != null)
-				await Close();
+		public UniTask Dispose() {
 			_isListening = false;
 
-			_webSocket?.Dispose();
-			_webSocket = null;
+			AbortSocket();
+
 			_cts?.Cancel();
 			_cts?.Dispose();
 			_cts = null;
 
 			Connections.Remove(this);
 			Logger.LogDebug($"ServerSocket for {_address} disposed.");
+
+			return UniTask.CompletedTask;
 		}
 
 		// ── Packet system ──────────────────────────────────────────────────────────
@@ -338,7 +404,7 @@ namespace Nox.Servers.Runtime.Networks {
 			}
 		}
 
-		private static SocketPacket<T> ToTyped<T>(SocketPacket raw) {
+		internal static SocketPacket<T> ToTyped<T>(SocketPacket raw) {
 			T typedPayload;
 			if (raw.payload is T direct)
 				typedPayload = direct;
